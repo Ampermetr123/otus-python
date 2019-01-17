@@ -6,7 +6,7 @@
 #                     '"$http_user_agent" "$htt p_x_forwarded_for" "$http_X_REQUEST_ID" "$http_X_RB_USER" '
 #                     '$request_time';
 
-import sys
+import shutil
 import argparse
 import json
 import logging
@@ -17,7 +17,7 @@ from os.path import isfile, join, exists
 from collections import namedtuple
 from numpy import median
 from string import Template
-
+from datetime import datetime, MINYEAR
 
 config = {
     "REPORT_SIZE": 1000,
@@ -29,25 +29,30 @@ config = {
 
 def setup_logger(logger_filename: str):
     """Setting up logger"""
-    # todo Read more about logger and check about unicode in output file
-    logging.basicConfig(level=logging.DEBUG, filename=logger_filename, filemode='w',
+
+    # Root logger is used in program to log
+    # But in test cases root logger could be used before setup_logger() call
+    # So to apply basicConfig certainly we reset root logger handler
+    for handler in logging.root.handlers:
+        logging.root.removeHandler(handler)
+
+    logging.basicConfig(level=logging.DEBUG, filename=logger_filename, filemode='a',
                         format='[%(asctime)s] %(levelname).1s %(message)s',
                         datefmt='%Y.%m.%d %H:%M:%S')
 
 
-def log():
-    """Returns application logger"""
-    return logging.getLogger(sys.argv[0] + "_logger")
-
-
-def reload_config(default_cfg):
-    """Checks command line parameters and return config structure or empty dict if error"""
+def get_config_filename():
+    """Parses command line and returns config file name"""
     parser = argparse.ArgumentParser(description="Log analyzer OTUS Phyton hometask")
     parser.add_argument('--config', default="./log_analyzer.cfg",
-                         help='configuration file in JSON format (default is ./log_analyzer.cfg)')
-    args = parser.parse_args()
+                        help='configuration file in JSON format (default is ./log_analyzer.cfg)')
+    return parser.parse_args().config
+
+
+def reload_config(config_filename, default_cfg):
+    """Returns updated config structure"""
     result_cfg = {}
-    with open(args.config, "rb") as f:
+    with open(config_filename, "rb") as f:
         file_config = json.load(f)
         for key, val in default_cfg.items():
             result_cfg[key] = file_config[key] if key in file_config else val
@@ -57,19 +62,16 @@ def reload_config(default_cfg):
 def get_latest_logfile_info(folder_path) -> namedtuple('FileDescription', 'path date'):
     """Looks for latest nginx-access-ui.. log file in the folder_path"""
     FileDescription = namedtuple('FileDescription', 'path date')
-    ret_val = FileDescription(None, 0)
-    regexp_filename = re.compile("(nginx-access-ui.log-\d{8}\.gz)|(nginx-access-ui.log-\d{8})")
+    ret_val = FileDescription(None, datetime(MINYEAR, 1, 1))
+    regexp_filename = re.compile('(nginx-access-ui.log-\d{8}\.gz)|(nginx-access-ui.log-\d{8})')
     for file_name in os.listdir(folder_path):
         full_path_name = join(folder_path, file_name)
         if isfile(full_path_name) and regexp_filename.fullmatch(file_name):
-            file_date = int(re.search("\d{8}", file_name).group())
+            file_date_str = re.search('\d{8}', file_name).group()
+            file_date = datetime.strptime(file_date_str, '%Y%m%d')
             if file_date > ret_val.date:
-                ret_val = FileDescription(full_path_name,file_date)
+                ret_val = FileDescription(full_path_name, file_date)
     return ret_val
-
-
-class WrongFileToParseException(Exception):
-    pass
 
 
 def parse_next_line(logfile_name, error_threshold):
@@ -81,7 +83,7 @@ def parse_next_line(logfile_name, error_threshold):
     f = gzip.open(logfile_name) if logfile_name.endswith('.gz') else open(logfile_name, "rb")
 
     for s in f:
-        line=s.decode(encoding='utf-8')
+        line = s.decode(encoding='utf-8')
         match_url = regexp_url.search(line)
         if not match_url:
             bad_parse += 1
@@ -96,12 +98,12 @@ def parse_next_line(logfile_name, error_threshold):
         yield (url, time)
 
     f.close()
-    log().debug('{} lines parsed from {}'.format(good_parse, good_parse+bad_parse))
+    logging.debug('{} lines parsed from {}'.format(good_parse, good_parse + bad_parse))
 
-    failure_perc = 100 if good_parse+bad_parse == 0 else bad_parse*100//(good_parse+bad_parse)
-    if  failure_perc > error_threshold:
-        raise WrongFileToParseException("File format error: "
-                        "{}% lines wasn't parsed successfully".format(failure_perc))
+    failure_perc = 100 if good_parse + bad_parse == 0 else bad_parse * 100 // (good_parse + bad_parse)
+    if failure_perc > error_threshold:
+        raise UserWarning("File format error: "
+                          "{}% lines wasn't parsed successfully".format(failure_perc))
 
 
 def analyse_log_file(log_filename, error_threshold=50):
@@ -128,7 +130,7 @@ def analyse_log_file(log_filename, error_threshold=50):
         val['url'] = url
         val['time_med'] = median(reqtime_list)
         val['time_perc'] = val['time_sum'] * 100 / total_requests_time
-        val['count_perc'] = len(reqtime_list)*100 / total_requests_count
+        val['count_perc'] = len(reqtime_list) * 100 / total_requests_count
         stat_db.append(val)
     return stat_db
 
@@ -138,7 +140,7 @@ def generate_report(data, report_template, report_filename, report_size=None):
     if report_size is None:
         report_size = len(data)
     if report_size < len(data):
-        selected = sorted(data, key=lambda p:p['time_sum'], reverse=True)
+        selected = sorted(data, key=lambda p: p['time_sum'], reverse=True)
         data = selected[:report_size]
 
     # converts floats to string for better view in report
@@ -160,56 +162,60 @@ def generate_report(data, report_template, report_filename, report_size=None):
 def main(default_cfg):
     try:
         # Starting up
-        cfg = reload_config(default_cfg)
+        cfg = reload_config(get_config_filename(), default_cfg)
         setup_logger(cfg["LOGGER_FILENAME"])
     except Exception as ex:
-        log().error('Configuration load failure: '+str(ex))
+        logging.error('Configuration load failure: ' + str(ex))
         return 1
 
     try:
         # Checking needed folders and files exists
+
+        for checked_file in ('report.html', 'jquery.tablesorter.min.js', 'jquery.tablesorter.js'):
+            if not exists(checked_file):
+                logging.error('Folder "{0}" for output report files doesn\'t contain file {1}. '
+                              'It needed for report generating.'.format(os.getcwd(), checked_file))
+                raise FileNotFoundError(checked_file)
+
         if not exists(cfg['LOG_DIR']):
-            log().error('Folder "{0}" that should contain input nginx-log files not exists. '
-                        'Please check the path in configuration file.'.format(cfg['LOG_DIR']))
-            return 1
+            logging.error('Folder "{0}" that should contain input nginx-log files not exists. '
+                          'Please check the path in configuration file.'.format(cfg['LOG_DIR']))
+            raise FileNotFoundError(cfg['LOG_DIR'])
+
         if not exists(cfg["REPORT_DIR"]):
-            log().error('Folder "{0}" for output report files not exists. '
-                        'Please check the path in configuration file.'.format(cfg['REPORT_DIR']))
-            return 1
-        for checked_file in ['report.html', 'jquery.tablesorter.min.js', 'jquery.tablesorter.js']:
+            os.mkdir(cfg["REPORT_DIR"])
+
+        for checked_file in ('jquery.tablesorter.min.js', 'jquery.tablesorter.js'):
             if not isfile(join(cfg["REPORT_DIR"], checked_file)):
-                log().error('Folder "{0}" for output report files doesn\'t contain {1}. '
-                            'File {1} needed for report generating.'.format(cfg['REPORT_DIR'], checked_file))
-                return 1
+                shutil.copy(checked_file, cfg["REPORT_DIR"])
 
         # Looking for file to parse
         file_info = get_latest_logfile_info(cfg['LOG_DIR'])
         if not file_info.path:
-            log().info('No file found to analyse.')
-            return 0
-        report_filename = join(cfg["REPORT_DIR"], 'report-'+str(file_info.date)+'.html')
+            logging.info('No file found to analyse.')
+            return
+
+        report_filename = join(cfg["REPORT_DIR"], 'report-' + file_info.date.strftime('%Y-%m-%d') + '.html')
         if exists(report_filename):
-            log().info('Report for latest nginx-log file ({}) have been already done. '
-                       'Check it in file {}.'.format(file_info.path, report_filename))
-            return 0
+            logging.info('Report for latest nginx-log file ({0}) have been already done. '
+                         'Check it in file {1}.'.format(file_info.path, report_filename))
+            return
 
         # Analysing
-        log().info('Analysing file '+file_info.path)
+        logging.info('Analysing file ' + file_info.path)
         statistic_db = analyse_log_file(file_info.path)
 
         # Reporting
-        report_template=join(cfg["REPORT_DIR"], 'report.html')
-        generate_report(statistic_db, report_template, report_filename, cfg['REPORT_SIZE'])
-        log().info('Report was generated to '+report_filename)
+        generate_report(statistic_db, 'report.html', report_filename, cfg['REPORT_SIZE'])
+        logging.info('Report was generated to ' + report_filename)
 
-        return 0
+    except UserWarning as uw:
+        logging.error(uw)
 
-    except WrongFileToParseException as ex:
-        log().error(ex)
-        return 1
     except Exception as ex:
-        log().exception(ex)
-        return 1
+        logging.exception(ex)
+        raise
+
 
 if __name__ == "__main__":
     main(config)
