@@ -15,7 +15,7 @@ import gzip
 import os
 from os.path import isfile, join, exists
 from collections import namedtuple
-from numpy import median
+from statistics import median
 from string import Template
 from datetime import datetime, MINYEAR
 
