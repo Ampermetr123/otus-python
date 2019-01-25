@@ -69,7 +69,10 @@ def get_latest_logfile_info(folder_path) -> namedtuple('FileDescription', 'path 
         full_path_name = join(folder_path, file_name)
         if isfile(full_path_name) and regexp_filename.fullmatch(file_name):
             file_date_str = re.search('\d{8}', file_name).group()
-            file_date = datetime.strptime(file_date_str, '%Y%m%d')
+            try:
+                file_date = datetime.strptime(file_date_str, '%Y%m%d')
+            except ValueError:
+                continue
             if file_date > ret_val.date:
                 ret_val = FileDescription(full_path_name, file_date)
     return ret_val
@@ -167,12 +170,12 @@ def main(default_cfg):
         setup_logger(cfg["LOGGER_FILENAME"])
     except Exception as ex:
         logging.error('Configuration load failure: ' + str(ex))
-        return 1
+        raise
 
     try:
         # Checking needed folders and files exists
 
-        for checked_file in [join(cfg['TEMPLATE_DIR'], x) for x in ('report.html', 'jquery.tablesorter.min.js', 'jquery.tablesorter.js')]:
+        for checked_file in [join(cfg['TEMPLATE_DIR'], x) for x in ('report.html', )]:
             if not exists(checked_file):
                 logging.error(' File required for report generation not found {}.', checked_file)
                 raise FileNotFoundError(checked_file)
@@ -184,10 +187,6 @@ def main(default_cfg):
 
         if not exists(cfg["REPORT_DIR"]):
             os.mkdir(cfg["REPORT_DIR"])
-
-        for checked_file in ('jquery.tablesorter.min.js', 'jquery.tablesorter.js'):
-            if not isfile(join(cfg["REPORT_DIR"], checked_file)):
-                shutil.copy(join(cfg['TEMPLATE_DIR'], checked_file), cfg["REPORT_DIR"])
 
         # Looking for file to parse
         file_info = get_latest_logfile_info(cfg['LOG_DIR'])
