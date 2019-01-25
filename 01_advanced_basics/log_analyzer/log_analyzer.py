@@ -23,7 +23,8 @@ config = {
     "REPORT_SIZE": 1000,
     "REPORT_DIR": "./reports",
     "LOG_DIR": "./log",
-    "LOGGER_FILENAME": None
+    "LOGGER_FILENAME": None,
+    "TEMPLATE_DIR": "./template"
 }
 
 
@@ -171,10 +172,9 @@ def main(default_cfg):
     try:
         # Checking needed folders and files exists
 
-        for checked_file in ('report.html', 'jquery.tablesorter.min.js', 'jquery.tablesorter.js'):
+        for checked_file in [join(cfg['TEMPLATE_DIR'], x) for x in ('report.html', 'jquery.tablesorter.min.js', 'jquery.tablesorter.js')]:
             if not exists(checked_file):
-                logging.error('Folder "{0}" for output report files doesn\'t contain file {1}. '
-                              'It needed for report generating.'.format(os.getcwd(), checked_file))
+                logging.error(' File required for report generation not found {}.', checked_file)
                 raise FileNotFoundError(checked_file)
 
         if not exists(cfg['LOG_DIR']):
@@ -187,7 +187,7 @@ def main(default_cfg):
 
         for checked_file in ('jquery.tablesorter.min.js', 'jquery.tablesorter.js'):
             if not isfile(join(cfg["REPORT_DIR"], checked_file)):
-                shutil.copy(checked_file, cfg["REPORT_DIR"])
+                shutil.copy(join(cfg['TEMPLATE_DIR'], checked_file), cfg["REPORT_DIR"])
 
         # Looking for file to parse
         file_info = get_latest_logfile_info(cfg['LOG_DIR'])
@@ -206,8 +206,9 @@ def main(default_cfg):
         statistic_db = analyse_log_file(file_info.path)
 
         # Reporting
-        generate_report(statistic_db, 'report.html', report_filename, cfg['REPORT_SIZE'])
+        generate_report(statistic_db, join(cfg['TEMPLATE_DIR'], 'report.html'), report_filename, cfg['REPORT_SIZE'])
         logging.info('Report was generated to ' + report_filename)
+
 
     except UserWarning as uw:
         logging.error(uw)
