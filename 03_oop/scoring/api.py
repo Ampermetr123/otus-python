@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 import json
 import datetime
 import logging
@@ -36,7 +33,9 @@ GENDERS = {
 }
 
 
-# ------------ Fields ------------
+class ValidationError(BaseException):
+    pass
+
 
 class Field:
     """Field, used in request"""
@@ -44,194 +43,288 @@ class Field:
         self.required = required
         self.nullable = nullable
         self.name = self.__class__.__name__
-    
-    def __repr__(self):
-        return "<Field: name: %s" % self.name
+        self.label = ''
+        self.content = None
+        self.validationResult = False
+        try:
+            self.validate(self.content)
+        except ValidationError:
+            pass
 
-    def is_null(self, content):
-        """Returns true, if content haven't any data"""
-        return len(content) == 0
-    
-    def check_type(self, content):
-        """Returns None if OK, or str with how it must be. Content is not None"""
-        pass
-    
-    def check_content(self, content):
-        """"Returns None if OK, or str with how it must be. Content isn't  None and isn't Null"""
-        pass
+    def __repr__(self):
+        return "< %s=%s(%s,%s) >" \
+            % (self.label, self.name, self.content, self.validationResult)
+
+    def __set__(self, instance, value):
+        """Sets content and validate. No throws exception"""
+        self.content = value
+        try:
+            self.validate(value)
+        except ValidationError as err:
+            instance.errors[self.label] = str(err)
+            self.validationResult = False
+        else:
+            instance.errors.pop(self.label, None)
+            self.validationResult = True
+
+    def __get__(self, instance,  value):
+        """Returns content if valid or throw ValidationError"""
+        if self.validationResult is False:
+            # repeat validation to raise Error with description again
+            self.validate(self.content)
+        return self.content
+
+    def is_valuable(self):
+        """Return True of content is valid and contains data"""
+        return self.validationResult \
+            and self.content is not None \
+            and not self.check_null(self.content)
 
     def validate(self, content):
-        """Returns None if OK, or str with how it must be"""
+        """Returns None if content is valid.
+        Else throws ValidationError with description how it must be."""
         if content is None:
-            return  'is required' if self.required else None
-        
-        type_check_result = self.check_type(content)
-        if type_check_result is not None:
-            return type_check_result
-
-        if self.is_null(content):
-            return None if self.nullable else 'mustnt\'t be empty'
+            if self.required:
+                raise ValidationError(self.label + ' is required')
+            else:
+                return
+        self.check_type(content)
+        if self.check_null(content):
+            if not self.nullable:
+                raise ValidationError(self.label + ' mustnt\'t be empty')
         return self.check_content(content)
+
+    # functions below should be refefined in subclasses
+    def check_null(self, content):
+        """Returns true, if content haven't any data"""
+        return len(content) == 0
+
+    def check_type(self, content):
+        """Returns None if OK. Throw ValidationError  with str how it must be.
+         Colled while content is not None"""
+        raise NotImplementedError()
+
+    def check_content(self, content):
+        """"Returns None if OK. Throw ValidationError  with str how it must be.
+        Called while content isn't  None and isn't Null"""
+        # any content is OK
+        pass
 
 
 class CharField(Field):
     """Cтрока"""
     def check_type(self, content):
         if type(content) != str:
-            return 'must be a string'
+            raise ValidationError(self.label + ' must be a string')
 
 
 class ArgumentsField(Field):
     """Объект в терминах JSON"""
     def check_type(self, content):
         if type(content) != dict:
-            return 'must be dictionary'
+            raise ValidationError(self.label + ' must be dictionary')
 
 
 class EmailField(Field):
     """Cтрока, в которой есть @"""
     def check_type(self, content):
         if type(content) != str:
-            return 'must be string'
-    
-    def check_content(self, contnet):
-        if not '@' in contnet:
-            return "must contain '@'" 
+            raise ValidationError(self.label + ' must be string')
+
+    def check_content(self, content):
+        if '@' not in content:
+            raise ValidationError(self.label + ' must contain @')
 
 
 class PhoneField(Field):
     """Cтрока или число, длиной 11, начинается с 7"""
     def check_type(self, content):
         if type(content) not in (str, int):
-            return 'must be a string or an integer'
-    
-    def is_null(self, content):
+            raise ValidationError(self.label +
+                                  ' must be a string or an integer')
+
+    def check_null(self, content):
         return len(str(content)) == 0
 
     def check_content(self, content):
-        if type(content)==int:
-            content=str(content)
-        if len(content)!=11:
-            return 'must have 11 symbols'
+        if type(content) == int:
+            content = str(content)
+        if len(content) != 11:
+            raise ValidationError(self.label + ' must have 11 symbols')
         if not content.startswith('7'):
-            return 'must started with "7"'
+            raise ValidationError(self.label + ' must started with "7"')
 
 
 class DateField(Field):
     """Дата в формате DD.MM.YYYY"""
     def check_type(self, content):
         if type(content) not in (str, int):
-            return 'must be a string or an integer'
+            raise ValidationError(self.label +
+                                  ' must be a string or an integer')
 
     def check_content(self, content):
         try:
             datetime.datetime.strptime(content, "%d.%m.%Y")
         except ValueError:
-            return 'must have DD.MM.YYYY format'
+            raise ValidationError(self.label + ' must have DD.MM.YYYY format')
 
 
 class BirthDayField(Field):
-    """Дата в формате DD.MM.YYYY, с которой прошло не больше 70 лет, опционально, может быть пустым"""
+    """Дата в формате DD.MM.YYYY, с которой прошло не больше 70 лет"""
     def check_type(self, content):
-        if type(content) !=  str:
-            return 'must be a stringr'
+        if type(content) != str:
+            raise ValidationError(self.label + ' must be a stringr')
 
     def check_content(self, content):
         try:
             birthday = datetime.datetime.strptime(content, "%d.%m.%Y")
-            years_70_ahead = datetime.datetime(birthday.year+70,birthday.month,birthday.day)
+            years_70_ahead = datetime.datetime(birthday.year+70,
+                                               birthday.month, birthday.day)
             if years_70_ahead < datetime.datetime.now():
-                return 'must be later then 70 years ago'
+                raise ValidationError(self.label +
+                                      ' must be later then 70 years ago')
         except ValueError:
-            return 'must have DD.MM.YYYY format'
+            raise ValidationError(self.label + ' must have DD.MM.YYYY format')
 
 
 class GenderField(Field):
-    "число 0, 1 или 2 (GENDERS.keys())" 
+    "число 0, 1 или 2 (GENDERS.keys())"
     def check_type(self, content):
         if type(content) != int:
-            return 'must be an integer'
+            raise ValidationError(self.label + ' must be an integer')
 
-    def is_null(self, content):
+    def check_null(self, content):
         # Если число существует, то оно имеет данные
         return False
 
     def check_content(self, content):
         if content not in GENDERS.keys():
-            return "must be from "+str(GENDERS.keys())
+            raise ValidationError(self.label +
+                                  " must be from " + str(GENDERS.keys()))
 
 
 class ClientIDsField(Field):
     """"массив чисел"""
     def check_type(self, content):
         if type(content) != list:
-            return 'must be an array of integers'
-    
+            raise ValidationError(self.label + ' must be an array of integers')
+
     def check_content(self, content):
         for client_id in content:
             if type(client_id) != int:
-                return 'must be an array of integers'
+                raise ValidationError(self.label +
+                                      ' must be an array of integers')
 
 
-# ------------ Requests handlers ------------
-
-class Request:
-    """Request base class"""
-    def validate_fields(self, request_dict):
-        """"Validating all Field's objects of class scope """
-        code = OK
-        response = {}
-        for field_name, obj in self.__class__.__dict__.items():
+class _MetaRequest(type):
+    """Makes dicts of fields in class, updatea labels in fields"""
+    def __init__(Class, classname, supers, classdict):
+        Class.fields = {}
+        for name, obj in classdict.items():
             if isinstance(obj, Field):
-                invalid_msg = obj.validate(request_dict.get(field_name))
-                if invalid_msg:
-                    if code == OK:
-                        response['error'] = ERRORS[INVALID_REQUEST] + ': \'' + field_name + "\' - " + invalid_msg
-                        code = INVALID_REQUEST
-                    else:
-                        response['error'] += ';  ' + field_name + " - " + invalid_msg
+                obj.label = name
+                Class.fields[name] = obj
+
+
+class _MetaHandler(_MetaRequest):
+    """Makes dict of handlrers in class"""
+    def __init__(Class, classname, supers, classdict):
+        Class.handlers = {}
+        for name, obj in classdict.items():
+            if isinstance(obj, MethodHandler):
+                obj.label = name
+                Class.handlers[name] = obj
+        super().__init__(classname, supers, classdict)
+
+
+class MethodHandler():
+    """Base class for Request Handlers"""
+    pass
+
+
+class OnlineScoreRequestHandler(MethodHandler):
+    def handle(self, arguments, **extra):
+        ctx = extra['ctx']
+        store = extra['store']
+        is_admin = extra['is_admin']
+
+        # basic validation
+        request = OnlineScoreRequest(arguments)
+        if not request.is_valid():
+            code = INVALID_REQUEST
+            response = {'error': ERRORS[INVALID_REQUEST] +
+                        ': '+'; '.join(request.errors.values())+'.'}
+            return response, code
+
+        # extra validation
+        if not request.are_fields_valuable(('phone', 'email')) and \
+           not request.are_fields_valuable(('first_name', 'last_name')) and \
+           not request.are_fields_valuable(('gender', 'birthday')):
+            code = INVALID_REQUEST
+            response = {'error': ERRORS[INVALID_REQUEST] +
+                        ': ' "not enough arguments for 'online_score' method"}
+            return response, code
+
+        # processing
+        ctx['has'] = [x for x in request.fields
+                      if request.fields[x].is_valuable()]
+        if is_admin:
+            response = {'score': int(ADMIN_SALT)}
+        else:
+            args = (getattr(request, x) for x in ('phone', 'email',
+                    'birthday', 'gender', 'first_name', 'last_name'))
+            response = {'score': scoring.get_score(store, *args)}
+        return response, OK
+
+
+class ClientsInterestsRequestHandler(MethodHandler):
+    # Field decloration
+    def handle(self, arguments, **extra):
+        ctx = extra['ctx']
+        store = extra['store']
+        request = ClientsInterestsRequest(arguments)
+        # basic validations
+        if not request.is_valid():
+            code = INVALID_REQUEST
+            response = {'error': ERRORS[INVALID_REQUEST]+': ' +
+                        '; '.join(request.errors.values())+'.'}
+            return response, code
+
+        # processing
+        ctx['nclients'] = len(request.client_ids)
+        response = {}
+        code = OK
+        for id in request.client_ids:
+            response[id] = scoring.get_interests(store, id)
         return response, code
-    
-    def check_fields_actual(self, request_dict, field_names):
-        """"Returns True if all specified fields are present in request_dict, not null and validated"""
-        for name in field_names:
-            fclass = self.__class__.__dict__[name].__class__
-            fdata = request_dict.get(name)
-            if fclass(True, False).validate(fdata) is not None:
+
+
+class Request(MethodHandler, metaclass=_MetaRequest):
+    def __init__(self, request_dict):
+        self.errors = {}
+        for field_name in self.fields:
+            setattr(self, field_name, request_dict.get(field_name))
+
+    def is_valid(self):
+        """Returns True if all fields in class are valid"""
+        return len(self.errors) == 0
+
+    def are_fields_valuable(self, field_names):
+        """"Returns True if all fields are present, not null and validated"""
+        for fname in field_names:
+            if not self.fields[fname].is_valuable():
                 return False
         return True
 
-    def handle(self, request_dict, *extra):
-        """handle request : validating and processing. """
-        raise NotImplementedError('Handle method not implemented')
-
 
 class ClientsInterestsRequest(Request):
-    """ clients_interests method request """
-
-    # fields in arguments
+    # Field decloration
     client_ids = ClientIDsField(required=True, nullable=False)
     date = DateField(required=False, nullable=True)
-    
-    def handle(self, request_dict, *extra):
-        ctx = extra[1]
-        store = extra[2]
-
-        # fields validations
-        response, code = self.validate_fields(request_dict)
-
-        if code == OK:
-            ctx['nclients'] = len(request_dict['client_ids'])
-            for id in request_dict['client_ids']:
-                response[id] = scoring.get_interests(store, id)
-
-        return response, code
 
 
 class OnlineScoreRequest(Request):
-    """ online_score method request """
-
-    # fields in arguments
+    # Field decloration
     first_name = CharField(required=False, nullable=True)
     last_name = CharField(required=False, nullable=True)
     email = EmailField(required=False, nullable=True)
@@ -239,95 +332,66 @@ class OnlineScoreRequest(Request):
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
 
-    def handle(self, request_dict, *extra):
-        admin_role= extra[0] is True
-        ctx=extra[1]
-        store=extra[2]
 
-        # basic validations
-        response, code = self.validate_fields(request_dict)
-
-        # extra validation
-        if code == OK:
-            if not self.check_fields_actual(request_dict, ('phone','email')) and \
-            not self.check_fields_actual(request_dict,('first_name','last_name')) and \
-            not self.check_fields_actual(request_dict,('gender','birthday')):
-                return {'error': "not enough arguments for 'online_score' method"}, INVALID_REQUEST
-        
-        # processing
-        if code == OK:
-            scoring_params = ('phone', 'email', 'birthday', 'gender', 'first_name', 'last_name')
-            ctx['has'] = [x for x in scoring_params if self.check_fields_actual(request_dict, (x,))]
-
-            if admin_role:
-                response = {'score': int(ADMIN_SALT)}
-            else:
-                args = (request_dict.get(x) for x in scoring_params)
-                response = {'score': scoring.get_score(store, *args)}
-
-        return response, code
-
-
-class MethodRequest(Request):
-
-    # Fields of Method Requests
+class MethodRequest(Request, metaclass=_MetaHandler):
+    # Field decloration
     account = CharField(required=False, nullable=True)
     login = CharField(required=True, nullable=True)
     token = CharField(required=True, nullable=True)
     arguments = ArgumentsField(required=True, nullable=True)
     method = CharField(required=True, nullable=False)
 
-    # Methods, that could be asked in Request
-    online_score = OnlineScoreRequest()
-    clients_interests = ClientsInterestsRequest()
+    # Methods declaration, that could be asked in Request.method
+    online_score = OnlineScoreRequestHandler()
+    clients_interests = ClientsInterestsRequestHandler()
 
-    def __init__(self, request, ctx, store):
-        self.request_dict = request.get('body')
-        self.ctx = ctx
-        self.store = store
-        self.login = self.request_dict.get('login', '')
-        self.account = self.request_dict.get('account', '')
-         
     @property
     def is_admin(self):
-        return self.login == ADMIN_LOGIN
+        return getattr(self, 'login') == ADMIN_LOGIN
 
     @property
     def method_token(self):
-        return self.request_dict.get('token')
+        return getattr(self, 'token')
 
-    def handle(self):
-        # Checking request fields
-        (response, code) = super().validate_fields(self.request_dict)
-        if code != OK:
-            return response, code
-        
-        # Checking auth
-        if check_auth(self) is False:
-            return {'error': ERRORS[FORBIDDEN]}, FORBIDDEN
-        
-        # Checking fields for specific method request
-        for method_name, obj in self.__class__.__dict__.items():
-            if isinstance(obj, Request) and method_name == self.request_dict.get('method'):
-                (response, code) = obj.handle(self.request_dict.get('arguments'), self.is_admin, self.ctx, self.store)
-
-        return response, code
+    @property
+    def handler(self):
+        """Return handler according 'method' field content"""
+        return self.handlers.get(getattr(self, 'method'))
 
 
 def check_auth(request):
     if request.is_admin:
-        digest = hashlib.sha512((datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).encode()).hexdigest()
+        digest = hashlib.sha512((datetime.datetime.now().strftime("%Y%m%d%H") +
+                                ADMIN_SALT).encode()).hexdigest()
     else:
-        digest = hashlib.sha512((request.account + request.login + SALT).encode()).hexdigest()
+        digest = hashlib.sha512((request.account +
+                                 request.login + SALT).encode()).hexdigest()
     if digest == request.method_token:
         return True
     return False
 
 
 def method_handler(request, ctx, store):
-    mr = MethodRequest(request, ctx, store)
-    responce, code = mr.handle()
-    return responce, code
+    method_request = MethodRequest(request.get('body'))
+    if not method_request.is_valid():
+        code = INVALID_REQUEST
+        response = {'error': ERRORS[INVALID_REQUEST]+': ' +
+                    '; '.join(method_request.errors.values())+'.'}
+        return response, code
+
+    # Checking auth
+    if check_auth(method_request) is False:
+        return {'error': ERRORS[FORBIDDEN]}, FORBIDDEN
+
+    if method_request.handler is None:
+        # return OK according hometask,
+        # thought it might not be well for unknown method
+        return OK, {}
+    admin_role = method_request.is_admin
+    response, code = method_request.handler.handle(method_request.arguments,
+                                                   ctx=ctx, store=store,
+                                                   is_admin=admin_role)
+    return response, code
 
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
