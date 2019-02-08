@@ -38,47 +38,41 @@ class ValidationError(BaseException):
 
 
 class Field:
-    """Field, used in request"""
+    """Field descriptor, used in request
+       For validated and no-None values creates fields in request instance
+       For invalid values creates record in errors dict in request instance 
+    """
     def __init__(self, required, nullable):
         self.required = required
         self.nullable = nullable
         self.name = self.__class__.__name__
         self.label = ''
-        self.content = None
-        self.validationResult = False
-        try:
-            self.validate(self.content)
-        except ValidationError:
-            pass
 
     def __repr__(self):
-        return "< %s=%s(%s,%s) >" \
-            % (self.label, self.name, self.content, self.validationResult)
+        return "< %s=%s>" % (self.label, self.name)
 
     def __set__(self, instance, value):
-        """Sets content and validate. No throws exception"""
-        self.content = value
+        """Set and validate. Updates instance __dict__ and errors
+        None - values not setted to __dict__"""
         try:
             self.validate(value)
         except ValidationError as err:
-            instance.errors[self.label] = str(err)
-            self.validationResult = False
+            instance.__dict__['errors'][self.label] = str(err)
+            instance.__dict__.pop(self.label, None)
         else:
-            instance.errors.pop(self.label, None)
-            self.validationResult = True
+            if value is not None:
+                instance.__dict__[self.label] = value
+            instance.__dict__['errors'].pop(self.label, None)
 
     def __get__(self, instance,  value):
-        """Returns content if valid or throw ValidationError"""
-        if self.validationResult is False:
-            # repeat validation to raise Error with description again
-            self.validate(self.content)
-        return self.content
-
-    def is_valuable(self):
-        """Return True of content is valid and contains data"""
-        return self.validationResult \
-            and self.content is not None \
-            and not self.check_null(self.content)
+        """Returns content if valid or throw AttributeError
+           So you can check for not None and valid with hasattr function
+        """
+        if self.label in instance.__dict__['errors']:
+            raise AttributeError(instance.__dict__['errors'][self.label])
+        if self.label not in instance.__dict__: 
+            raise AttributeError(self.label)
+        return instance.__dict__[self.label]
 
     def validate(self, content):
         """Returns None if content is valid.
@@ -91,10 +85,10 @@ class Field:
         self.check_type(content)
         if self.check_null(content):
             if not self.nullable:
-                raise ValidationError(self.label + ' mustnt\'t be empty')
+                raise ValidationError(self.label + " mustn't be empty")
         return self.check_content(content)
 
-    # functions below should be refefined in subclasses
+    # functions below should be redefined in subclasses
     def check_null(self, content):
         """Returns true, if content haven't any data"""
         return len(content) == 0
@@ -112,7 +106,7 @@ class Field:
 
 
 class CharField(Field):
-    """Cтрока"""
+    """Строка"""
     def check_type(self, content):
         if type(content) != str:
             raise ValidationError(self.label + ' must be a string')
@@ -137,7 +131,7 @@ class EmailField(Field):
 
 
 class PhoneField(Field):
-    """Cтрока или число, длиной 11, начинается с 7"""
+    """Строка или число, длиной 11, начинается с 7"""
     def check_type(self, content):
         if type(content) not in (str, int):
             raise ValidationError(self.label +
@@ -173,7 +167,7 @@ class BirthDayField(Field):
     """Дата в формате DD.MM.YYYY, с которой прошло не больше 70 лет"""
     def check_type(self, content):
         if type(content) != str:
-            raise ValidationError(self.label + ' must be a stringr')
+            raise ValidationError(self.label + ' must be a string')
 
     def check_content(self, content):
         try:
@@ -226,80 +220,7 @@ class _MetaRequest(type):
                 Class.fields[name] = obj
 
 
-class _MetaHandler(_MetaRequest):
-    """Makes dict of handlrers in class"""
-    def __init__(Class, classname, supers, classdict):
-        Class.handlers = {}
-        for name, obj in classdict.items():
-            if isinstance(obj, MethodHandler):
-                obj.label = name
-                Class.handlers[name] = obj
-        super().__init__(classname, supers, classdict)
-
-
-class MethodHandler():
-    """Base class for Request Handlers"""
-    pass
-
-
-class OnlineScoreRequestHandler(MethodHandler):
-    def handle(self, arguments, **extra):
-        ctx = extra['ctx']
-        store = extra['store']
-        is_admin = extra['is_admin']
-
-        # basic validation
-        request = OnlineScoreRequest(arguments)
-        if not request.is_valid():
-            code = INVALID_REQUEST
-            response = {'error': ERRORS[INVALID_REQUEST] +
-                        ': '+'; '.join(request.errors.values())+'.'}
-            return response, code
-
-        # extra validation
-        if not request.are_fields_valuable(('phone', 'email')) and \
-           not request.are_fields_valuable(('first_name', 'last_name')) and \
-           not request.are_fields_valuable(('gender', 'birthday')):
-            code = INVALID_REQUEST
-            response = {'error': ERRORS[INVALID_REQUEST] +
-                        ': ' "not enough arguments for 'online_score' method"}
-            return response, code
-
-        # processing
-        ctx['has'] = [x for x in request.fields
-                      if request.fields[x].is_valuable()]
-        if is_admin:
-            response = {'score': int(ADMIN_SALT)}
-        else:
-            args = (getattr(request, x) for x in ('phone', 'email',
-                    'birthday', 'gender', 'first_name', 'last_name'))
-            response = {'score': scoring.get_score(store, *args)}
-        return response, OK
-
-
-class ClientsInterestsRequestHandler(MethodHandler):
-    # Field decloration
-    def handle(self, arguments, **extra):
-        ctx = extra['ctx']
-        store = extra['store']
-        request = ClientsInterestsRequest(arguments)
-        # basic validations
-        if not request.is_valid():
-            code = INVALID_REQUEST
-            response = {'error': ERRORS[INVALID_REQUEST]+': ' +
-                        '; '.join(request.errors.values())+'.'}
-            return response, code
-
-        # processing
-        ctx['nclients'] = len(request.client_ids)
-        response = {}
-        code = OK
-        for id in request.client_ids:
-            response[id] = scoring.get_interests(store, id)
-        return response, code
-
-
-class Request(MethodHandler, metaclass=_MetaRequest):
+class Request(metaclass=_MetaRequest):
     def __init__(self, request_dict):
         self.errors = {}
         for field_name in self.fields:
@@ -312,19 +233,20 @@ class Request(MethodHandler, metaclass=_MetaRequest):
     def are_fields_valuable(self, field_names):
         """"Returns True if all fields are present, not null and validated"""
         for fname in field_names:
-            if not self.fields[fname].is_valuable():
+            if not hasattr(self, fname) or \
+               self.fields[fname].check_null(getattr(self, fname)):
                 return False
         return True
 
 
 class ClientsInterestsRequest(Request):
-    # Field decloration
+    # Field declaration
     client_ids = ClientIDsField(required=True, nullable=False)
     date = DateField(required=False, nullable=True)
 
 
 class OnlineScoreRequest(Request):
-    # Field decloration
+    # Field declaration
     first_name = CharField(required=False, nullable=True)
     last_name = CharField(required=False, nullable=True)
     email = EmailField(required=False, nullable=True)
@@ -333,17 +255,13 @@ class OnlineScoreRequest(Request):
     gender = GenderField(required=False, nullable=True)
 
 
-class MethodRequest(Request, metaclass=_MetaHandler):
-    # Field decloration
+class MethodRequest(Request):
+    # Field declaration
     account = CharField(required=False, nullable=True)
     login = CharField(required=True, nullable=True)
     token = CharField(required=True, nullable=True)
     arguments = ArgumentsField(required=True, nullable=True)
     method = CharField(required=True, nullable=False)
-
-    # Methods declaration, that could be asked in Request.method
-    online_score = OnlineScoreRequestHandler()
-    clients_interests = ClientsInterestsRequestHandler()
 
     @property
     def is_admin(self):
@@ -371,8 +289,89 @@ def check_auth(request):
     return False
 
 
+def non_method_handler(arguments, **extra):
+    return {}, OK
+
+
+def onine_score_handler(arguments, **extra):
+    ctx = extra['ctx']
+    store = extra['store']
+    is_admin = extra['is_admin']
+
+    request = OnlineScoreRequest(arguments)  
+    # basic validations
+    if not request.is_valid():
+        code = INVALID_REQUEST
+        response = {'error': ERRORS[INVALID_REQUEST]+': ' +
+                    '; '.join(request.errors.values())+'.'}
+        return response, code
+    
+    # extra validation without helping function
+    extravalid = False
+    if hasattr(request, 'phone') and hasattr(request, 'email'):
+        if not request.fields['phone'].check_null(request.phone) \
+           and not request.fields['email'].check_null(request.email):
+            extravalid = True
+    elif hasattr(request, 'first_name') and hasattr(request, 'last_name'):
+        if not request.fields['first_name'].check_null(request.first_name) \
+           and not request.fields['last_name'].check_null(request.last_name):
+            extravalid = True  
+    elif hasattr(request, 'gender') and hasattr(request, 'birthday'):
+        if not request.fields['gender'].check_null(request.gender) \
+           and not request.fields['birthday'].check_null(request.birthday):
+            extravalid = True  
+    if extravalid is False:
+        code = INVALID_REQUEST
+        response = {'error': ERRORS[INVALID_REQUEST] +
+                    ': ' "not enough arguments for 'online_score' method"}
+        return response, code
+   
+    # extra validation with helping function
+    # if not request.are_fields_valuable(('phone', 'email')) and \
+    #     not request.are_fields_valuable(('first_name', 'last_name')) and \
+    #     not request.are_fields_valuable(('gender', 'birthday')):
+    #     code = INVALID_REQUEST
+    #     response = {'error': ERRORS[INVALID_REQUEST] +
+    #                 ': ' "not enough arguments for 'online_score' method"}
+    #     return response, code
+
+    # processing
+    ctx['has'] = [x for x in request.fields
+                  if hasattr(request, x) and not request.fields[x].check_null(getattr(request, x))]
+    if is_admin:
+        response = {'score': int(ADMIN_SALT)}
+    else:
+        args = (getattr(request, x, None) for x in ('phone', 'email',
+                'birthday', 'gender', 'first_name', 'last_name'))
+        response = {'score': scoring.get_score(store, *args)}
+    return response, OK
+
+
+def clients_inerests_handler(arguments, **extra):
+    ctx = extra['ctx']
+    store = extra['store']
+    request = ClientsInterestsRequest(arguments)
+    # basic validations
+    if not request.is_valid():
+        code = INVALID_REQUEST
+        response = {'error': ERRORS[INVALID_REQUEST]+': ' +
+                    '; '.join(request.errors.values())+'.'}
+        return response, code
+
+    # processing
+    ctx['nclients'] = len(request.client_ids)
+    response = {}
+    code = OK
+    for id in request.client_ids:
+        response[id] = scoring.get_interests(store, id)
+    return response, code
+
+
 def method_handler(request, ctx, store):
+
     method_request = MethodRequest(request.get('body'))
+
+    # basic validation
     if not method_request.is_valid():
         code = INVALID_REQUEST
         response = {'error': ERRORS[INVALID_REQUEST]+': ' +
@@ -383,14 +382,24 @@ def method_handler(request, ctx, store):
     if check_auth(method_request) is False:
         return {'error': ERRORS[FORBIDDEN]}, FORBIDDEN
 
-    if method_request.handler is None:
-        # return OK according hometask,
-        # thought it might not be well for unknown method
-        return OK, {}
-    admin_role = method_request.is_admin
-    response, code = method_request.handler.handle(method_request.arguments,
-                                                   ctx=ctx, store=store,
-                                                   is_admin=admin_role)
+    if method_request.method == 'online_score':
+        response, code = onine_score_handler(method_request.arguments,
+                                             ctx=ctx, store=store,
+                                             is_admin=method_request.is_admin)
+    elif method_request.method == 'clients_interests':
+        response, code = clients_inerests_handler(method_request.arguments,
+                                                  ctx=ctx, store=store,
+                                                  is_admin=method_request.is_admin) 
+    elif method_request.method is None:
+        # accordig task if method be None -  it's not invalid request. 
+        # So it's probably some default method
+        response, code = non_method_handler(method_request.arguments,
+                                            ctx=ctx, store=store,
+                                            is_admin=method_request.is_admin)
+    else:
+        response, code = {'errors': 'Method not supported ' +
+                          method_request.method}, INVALID_REQUEST
+
     return response, code
 
 
@@ -418,7 +427,8 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
             logging.info("%s: %s %s" % (self.path, data_string, context["request_id"]))
             if path in self.router:
                 try:
-                    response, code = self.router[path]({"body": request, "headers": self.headers}, context, self.store)
+                    response, code = self.router[path]({"body": request, "headers": self.headers}, 
+                                                       context, self.store)
                 except Exception as e:
                     logging.exception("Unexpected error: %s" % e)
                     code = INTERNAL_ERROR
