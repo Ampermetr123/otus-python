@@ -213,6 +213,11 @@ class ClientIDsField(Field):
 class _MetaRequest(type):
     """Makes dicts of fields in class, updatea labels in fields"""
     def __init__(Class, classname, supers, classdict):
+
+        # The practice of calling the base-class constructor first in the\
+        # derived-class constructor should be followed with metaclasses as well
+        super(_MetaRequest, Class).__init__(classname, supers, classdict)
+        
         Class.fields = {}
         for name, obj in classdict.items():
             if isinstance(obj, Field):
@@ -230,14 +235,6 @@ class Request(metaclass=_MetaRequest):
         """Returns True if all fields in class are valid"""
         return len(self.errors) == 0
 
-    def are_fields_valuable(self, field_names):
-        """"Returns True if all fields are present, not null and validated"""
-        for fname in field_names:
-            if not hasattr(self, fname) or \
-               self.fields[fname].check_null(getattr(self, fname)):
-                return False
-        return True
-
 
 class ClientsInterestsRequest(Request):
     # Field declaration
@@ -253,6 +250,37 @@ class OnlineScoreRequest(Request):
     phone = PhoneField(required=False, nullable=True)
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
+
+    def is_valid(self):
+        """
+        Validates fields and fields combinations
+
+        Returns True if request is valid.
+        If combination  of field in request is wrong then 
+        sets 'extra_valid_error' string in instance
+        """
+        self.extra_valid_error = None
+        valid = False
+        if not super().is_valid():
+            return False
+
+        elif hasattr(self, 'phone') and hasattr(self, 'email'):
+            if not self.fields['phone'].check_null(self.phone) \
+               and not self.fields['email'].check_null(self.email):
+                valid = True
+        elif hasattr(self, 'first_name') and hasattr(self, 'last_name'):
+            if not self.fields['first_name'].check_null(self.first_name) \
+               and not self.fields['last_name'].check_null(self.last_name):
+                valid = True
+        elif hasattr(self, 'gender') and hasattr(self, 'birthday'):
+            if not self.fields['gender'].check_null(self.gender) \
+               and not self.fields['birthday'].check_null(self.birthday):
+                valid = True
+
+        if not valid:
+            self.extra_valid_error = "not enough arguments"
+
+        return valid
 
 
 class MethodRequest(Request):
@@ -289,10 +317,6 @@ def check_auth(request):
     return False
 
 
-def non_method_handler(arguments, **extra):
-    return {}, OK
-
-
 def onine_score_handler(arguments, **extra):
     ctx = extra['ctx']
     store = extra['store']
@@ -301,43 +325,18 @@ def onine_score_handler(arguments, **extra):
     request = OnlineScoreRequest(arguments)  
     # basic validations
     if not request.is_valid():
-        code = INVALID_REQUEST
-        response = {'error': ERRORS[INVALID_REQUEST]+': ' +
-                    '; '.join(request.errors.values())+'.'}
-        return response, code
-    
-    # extra validation without helping function
-    extravalid = False
-    if hasattr(request, 'phone') and hasattr(request, 'email'):
-        if not request.fields['phone'].check_null(request.phone) \
-           and not request.fields['email'].check_null(request.email):
-            extravalid = True
-    elif hasattr(request, 'first_name') and hasattr(request, 'last_name'):
-        if not request.fields['first_name'].check_null(request.first_name) \
-           and not request.fields['last_name'].check_null(request.last_name):
-            extravalid = True  
-    elif hasattr(request, 'gender') and hasattr(request, 'birthday'):
-        if not request.fields['gender'].check_null(request.gender) \
-           and not request.fields['birthday'].check_null(request.birthday):
-            extravalid = True  
-    if extravalid is False:
-        code = INVALID_REQUEST
-        response = {'error': ERRORS[INVALID_REQUEST] +
-                    ': ' "not enough arguments for 'online_score' method"}
-        return response, code
-   
-    # extra validation with helping function
-    # if not request.are_fields_valuable(('phone', 'email')) and \
-    #     not request.are_fields_valuable(('first_name', 'last_name')) and \
-    #     not request.are_fields_valuable(('gender', 'birthday')):
-    #     code = INVALID_REQUEST
-    #     response = {'error': ERRORS[INVALID_REQUEST] +
-    #                 ': ' "not enough arguments for 'online_score' method"}
-    #     return response, code
+        response = {'error': ERRORS[INVALID_REQUEST]+': '}
+        if request.extra_valid_error:
+            response['error'] += request.extra_valid_error+'.'
+        elif request.errors:
+            response['error'] += '; '.join(request.errors.values())+'.' 
+       
+        return response, INVALID_REQUEST
 
     # processing
     ctx['has'] = [x for x in request.fields
-                  if hasattr(request, x) and not request.fields[x].check_null(getattr(request, x))]
+                  if hasattr(request, x)
+                  and not request.fields[x].check_null(getattr(request, x))]
     if is_admin:
         response = {'score': int(ADMIN_SALT)}
     else:
@@ -353,18 +352,16 @@ def clients_inerests_handler(arguments, **extra):
     request = ClientsInterestsRequest(arguments)
     # basic validations
     if not request.is_valid():
-        code = INVALID_REQUEST
         response = {'error': ERRORS[INVALID_REQUEST]+': ' +
                     '; '.join(request.errors.values())+'.'}
-        return response, code
+        return response, INVALID_REQUEST
 
     # processing
     ctx['nclients'] = len(request.client_ids)
     response = {}
-    code = OK
     for id in request.client_ids:
         response[id] = scoring.get_interests(store, id)
-    return response, code
+    return response, OK
 
 
 def method_handler(request, ctx, store):
@@ -390,12 +387,6 @@ def method_handler(request, ctx, store):
         response, code = clients_inerests_handler(method_request.arguments,
                                                   ctx=ctx, store=store,
                                                   is_admin=method_request.is_admin) 
-    elif method_request.method is None:
-        # accordig task if method be None -  it's not invalid request. 
-        # So it's probably some default method
-        response, code = non_method_handler(method_request.arguments,
-                                            ctx=ctx, store=store,
-                                            is_admin=method_request.is_admin)
     else:
         response, code = {'errors': 'Method not supported ' +
                           method_request.method}, INVALID_REQUEST
@@ -454,7 +445,8 @@ if __name__ == "__main__":
     op.add_option("-l", "--log", action="store", default=None)
     (opts, args) = op.parse_args()
     logging.basicConfig(filename=opts.log, level=logging.INFO,
-                        format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
+                        format='[%(asctime)s] %(levelname).1s %(message)s',
+                        datefmt='%Y.%m.%d %H:%M:%S')
     server = HTTPServer(("localhost", opts.port), MainHTTPHandler)
     logging.info("Starting server at %s" % opts.port)
     try:
