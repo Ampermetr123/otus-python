@@ -46,7 +46,7 @@ class TestIntegral(unittest.TestCase):
         if not hasattr(self, 'redis_cont'):
             self.docker = docker.from_env()
             self.redis_cont = self.docker.containers.run('redis', detach=True,
-                                                         name="redisTestServer", ports={6379: 6379})
+                                                         ports={6379: 6379})
             print('redis server started')
             self.addCleanup(self.stop_redis_server)  
 
