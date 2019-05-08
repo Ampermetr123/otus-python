@@ -1,4 +1,7 @@
-﻿task
+﻿tar
+task
 temp
 .idea
+.vscode
+.vs
 __pycache__
