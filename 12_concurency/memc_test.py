@@ -124,7 +124,6 @@ class TestMemcLoad(unittest.TestCase):
             clients[c].disconnect_all()        
         self.assertTrue(exists(sample_dotfile))
 
-
     @unittest.skip('Demonstration of procesing huge files is skipped')
     @duration_report
     def test_huge(self):

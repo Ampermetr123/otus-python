@@ -102,7 +102,6 @@ class FileReader(Thread):
                 # Waiting for processor needs new data
                 self.ev.wait()
 
-        dot_rename(self.fn)
         logging.debug('Finished')
 
 
@@ -209,12 +208,13 @@ def main(options):
     # waiting the end
     for r in readers:
         r.join()
+        dot_rename(r.fn)
     processor.stop()
     processor.join()
     for w in cache_writers:
         w.stop()
         w.join()
-    
+
     logging.info('All task done!')
 
 
