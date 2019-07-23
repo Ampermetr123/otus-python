@@ -108,7 +108,7 @@ class Field:
 
     def check_content(self, content):
         """"Returns None if OK. Throw ValidationError  with str how it must be.
-        Called while content isn't  None and isn't Null"""
+        Called while content isn't  None and isn't empty and valid type"""
         # any content is OK
         pass
 
@@ -125,7 +125,9 @@ class ArgumentsField(Field):
     def check_type(self, content):
         if type(content) != dict:
             raise ValidationError(self.label + ' must be JSON dictionary')
-        if len ([x for x in content if type(x) != str]):
+    
+    def check_content(self, content):
+        if len([x for x in content if type(x) != str]):
             raise ValidationError(self.label + ' JSON dict must have string keys')
 
 
@@ -332,15 +334,15 @@ def onine_score_handler(arguments, **extra):
     store = extra['store']
     is_admin = extra['is_admin']
 
-    request = OnlineScoreRequest(arguments)  
+    request = OnlineScoreRequest(arguments)
     # basic validations
     if not request.is_valid():
         response = {'error': ERRORS[INVALID_REQUEST]+': '}
         if request.extra_valid_error:
             response['error'] += request.extra_valid_error+'.'
         elif request.errors:
-            response['error'] += '; '.join(request.errors.values())+'.' 
-       
+            response['error'] += '; '.join(request.errors.values())+'.'
+
         return response, INVALID_REQUEST
 
     # processing

@@ -33,6 +33,7 @@ class Store():
         self.r = redis.Redis(host, port, db, socket_timeout=0.5, socket_connect_timeout=0.5)
         self.cache = {}
         self.cache_size = cache_size
+        assert (cache_size > 0)
 
     @attempts(3, 0.3)
     def set(self, key, val):
@@ -47,6 +48,7 @@ class Store():
         """ Getting from cache or storage - No throws errors"""
         # В данном случае, внутри можно реализовать это и как хождение в одно и тоже хранилище.
         # Важно то, как это будет протестировано с учетом разных требований для разных функций
+        
         try:
             self.cache[key] = self.cache.pop(key)
             return self.cache[key]
@@ -57,7 +59,7 @@ class Store():
             except redis.RedisError:
                 return None
 
-    def cache_set(self, key, val, timeout):
+    def cache_set(self, key, val):
         """ Setting value to cache and storage -  No throws errors"""
 
         # if key exists - moving it to the end
@@ -69,7 +71,8 @@ class Store():
         self.cache[key] = val
 
         while len(self.cache) > self.cache_size:
-            self.cache.popitem(last=False)
+            # removing the first key
+            self.cache.pop(next(iter(self.cache)))
 
         try:
             return self.r.set(key, val)
