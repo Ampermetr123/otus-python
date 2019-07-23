@@ -26,7 +26,7 @@ def mock_get_interests(store, cid):
     return random.sample(interests, 2)
 
 
-class TestSuite(unittest.TestCase):
+class TestRequests(unittest.TestCase):
     def setUp(self):
         self.context = {}
         self.headers = {}

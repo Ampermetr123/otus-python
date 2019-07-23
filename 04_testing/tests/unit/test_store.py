@@ -15,6 +15,22 @@ class TestStore(unittest.TestCase):
         store.cache_set(key, val, timeout=1)
         self.assertEqual(val, store.cache_get(key), "with key = %s and val = %s" % (key, val))
 
+    def test_LRU_cache(self):
+        size = 10  # cache size
+        used_index = [2, 4, 5]  # these keys are used frequently
+        lost_index = [3, 6, 7]
+        store = Store(host="localhost", port="6379", db='_not_exist_test_db_', cache_size=size)
+        with patch('redis.Redis.get') as mock_get:
+            mock_get.return_value = None
+            with patch('redis.Redis.set') as mock_set:
+                for i in range(size*50):
+                    store.cache_set(i, i*i)
+                    j = i % len(used_index)
+                    if j < i:
+                        self.assertEqual(j*j, store.cache_get(j))
+            for j in lost_index:
+                self.assertIsNone(store.cache_get(j))
+
     def test_cache_get_noraises_when_nodata(self):
         store = Store(host="localhost", port="6379", db='_not_exist_test_db_')
         try:
