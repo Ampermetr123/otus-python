@@ -37,7 +37,7 @@ class Store():
 
     @attempts(3, 0.3)
     def set(self, key, val):
-        self.r.set(key,val)
+        self.r.set(key, val)
 
     @attempts(3, 0.3)
     def get(self, key):

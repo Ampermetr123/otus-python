@@ -3,6 +3,7 @@ import subprocess
 import hashlib
 import signal
 import datetime
+from os import environ
 
 import requests
 import docker
@@ -12,12 +13,14 @@ from server import store
 from tests.cases import cases
 
 
-class TestIntegral(unittest.TestCase):
+
+
+class TestFunctional(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # starting scoring server
-        cls.port = 8085
-        cls.server_proc = subprocess.Popen(['python.exe', 'server/api.py', '-p', str(cls.port), '-l', 'tests/server.log'],
+        cls.port = environ['TEST04_SCORING_PORT']
+        cls.server_proc = subprocess.Popen([environ['TEST04_PYTHON_PATH'], 'server/api.py', '-p', str(cls.port), '-l', 'tests/server.log'],
                                            shell=False, creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP))
         print('http server started on port ', str(cls.port), ' pid=', cls.server_proc.pid)
         super().setUpClass()
@@ -44,9 +47,9 @@ class TestIntegral(unittest.TestCase):
 
     def start_redis_server(self):
         if not hasattr(self, 'redis_cont'):
-            self.docker = docker.from_env()
-            self.redis_cont = self.docker.containers.run('redis', detach=True,
-                                                         ports={6379: 6379})
+            self.docker = docker.DockerClient(environ['TEST04_DOCKER_HOST'], tls=False)
+            self.redis_cont = self.docker.containers.run(environ['TEST04_REDIS_CONTAINER'], detach=True,
+                                                         ports={6379:environ['TEST04_REDIS_PORT']})
             print('redis server started')
             self.addCleanup(self.stop_redis_server)  
 
