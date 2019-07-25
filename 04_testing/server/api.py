@@ -6,6 +6,8 @@ import uuid
 from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+from os import environ
+
 # adding this allow to run api like this  >python.exe server/api.py
 # this way server module on next lines will be possible to import
 import sys
@@ -417,10 +419,12 @@ def method_handler(request, ctx, store):
 
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
+    
     router = {
         "method": method_handler
     }
-    store = store.Store()
+    store = store.Store(host=environ.get('TEST04_REDIS_HOST', '127.0.0.1'),
+                        port=environ.get('TEST04_REDIS_PORT', '6379'))
 
     def get_request_id(self, headers):
         return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)
@@ -469,7 +473,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
 
     op = OptionParser()
-    op.add_option("-p", "--port", action="store", type=int, default=8082)
+    op.add_option("-p", "--port", action="store", type=int, default=8085)
     op.add_option("-l", "--log", action="store", default=None)
     (opts, args) = op.parse_args()
     logging.basicConfig(filename=opts.log, level=logging.INFO,

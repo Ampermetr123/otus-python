@@ -28,8 +28,8 @@ def get_score(store, phone, email, birthday=None, gender=None, first_name=None, 
         score += 1.5
     if first_name and last_name:
         score += 0.5
-    # cache for 60 minutes
-    store.cache_set(key, score, 60 * 60)
+    
+    store.cache_set(key, score)
     return score
 
 

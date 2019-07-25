@@ -5,6 +5,7 @@ from server.store import Store
 from tests.cases import cases
 
 
+
 class TestStore(unittest.TestCase):
 
     @cases([(1, 2),
@@ -12,7 +13,7 @@ class TestStore(unittest.TestCase):
             (1, '3')])
     def test_cache_get_what_set(self, key, val):
         store = Store(host="localhost", port="6379", db='_not_exist_test_db_')
-        store.cache_set(key, val, timeout=1)
+        store.cache_set(key, val)
         self.assertEqual(val, store.cache_get(key), "with key = %s and val = %s" % (key, val))
 
     def test_LRU_cache(self):

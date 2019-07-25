@@ -1,0 +1,8 @@
+setx TEST04_PYTHON_PATH "C:\Python37\python.exe"
+setx TEST04_REDIS_HOST "localhost"
+setx TEST04_REDIS_PORT 6379
+setx TEST04_REDIS_CONTAINER "redis"
+setx TEST04_SCORING_PORT 8085
+setx TEST04_DOCKER_HOST "tcp://127.0.0.1:2375"
+pause
+
